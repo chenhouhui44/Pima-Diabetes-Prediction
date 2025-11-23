@@ -1,0 +1,272 @@
+---
+title: "Diabetes Prediction"
+author: "陈侯慧"
+date: "2025-11-23"
+output: html_document
+---
+#引言
+1.1 项目背景与目标
+本项目基于 Pima 印第安人糖尿病数据集，该数据集旨在预测患者是否患有糖尿病。由于该群体在遗传和生活方式上具有特殊性，其糖尿病患病率远高于一般人群，因此对该数据的分析具有重要的公共卫生意义。
+主要目标：
+-对数据进行探索性分析（EDA），理解各生理指标的分布特征。
+-识别与糖尿病（Outcome）显著相关的生理风险因素。
+-构建一个逻辑回归 (Logistic Regression) 预测模型，并评估其区分和诊断性能。
+
+#数据与方法
+2.1 数据来源与特征描述
+本研究使用Pima indians Diabetes Database数据集，该数据集来源于kaggle平台，由美国国家糖尿病与消化及肾脏疾病研究所提供。
+数据集链接：[https://www.kaggle.com/datasets/uciml/pima-indians-diabetes-database]
+数据背景；数据来自亚利桑那州凤凰城的Pima印第安人社区，该类人2型糖尿病发病率较高。
+数据获取时间：1988年左右
+数据描述：包含 768 名 Pima 女性患者的生理测量数据，共包含 8 个预测变量和 1 个结果变量。
+| 变量                     | 中文描述           | 类型 |
+--------------------------------------------------------
+| Glucose                  | 血浆葡萄糖浓度     | 连续 |
+| BloodPressure            | 舒张压             | 连续 |
+| SkinThickness            | 皮褶厚度           | 连续 |
+| Insulin                  | 血清胰岛素         | 连续 |
+| BMI                      | 身体质量指数       | 连续 |
+| DiabetesPedigreeFunction | 家族遗传系数       | 连续 |
+| Age                      | 年龄               | 连续 |
+| Outcome                  | 0：健康；1：糖尿病 | 分类 |
+
+2.2 数据清洗与预处理
+在医学数据中，部分生理指标如血糖、血压等出现零值在生物学上是不合理的。我们将这些零值视为缺失值（NA），并采用中位数填充法进行处理，以最大程度地保留数据信息并防止异常值对模型训练造成影响。
+```{r}
+# R Markdown 配置，不包含包的加载
+# 加载所需的包：dplyr 用于数据操作
+if(!require(dplyr)) install.packages("dplyr")
+library(dplyr)
+if(!require(knitr)) install.packages("knitr")
+library(knitr)
+# 假设 diabetes.csv 文件已在 R Markdown 运行环境中加载
+diabetes <- read.csv("D:/10226/Pima_Diabetes_Project/diabetes.csv") # 假设文件在当前路径下
+# 将不合理的 0 值替换为 NA
+cols_check <- c("Glucose", "BloodPressure", "SkinThickness", "Insulin", "BMI")
+for(col in cols_check){
+  diabetes[[col]][diabetes[[col]] == 0] <- NA
+}
+# 使用中位数对缺失值进行填充 (NA -> Median)
+for(col in cols_check){
+  diabetes[[col]][is.na(diabetes[[col]])] <- median(diabetes[[col]], na.rm = TRUE)
+}
+cat("--- 清洗后数据摘要 --- \n")
+summary(diabetes)
+```
+2.3 数据集拆分
+将数据集按 7:3 的比例划分为训练集和测试集，并设置随机种子（set.seed(123)）确保结果可复现。
+
+```{r}
+# 加载所需的包：caret 用于数据分区
+if(!require(caret)) install.packages("caret")
+library(caret)
+set.seed(123)
+train_index <- createDataPartition(diabetes$Outcome, p = 0.7, list = FALSE)
+
+train_data <- diabetes[train_index, ]
+test_data  <- diabetes[-train_index, ]
+
+cat("训练集样本量:", nrow(train_data), "\n")
+cat("测试集样本量:", nrow(test_data), "\n")
+```
+3.1 探索性数据分析 (EDA)
+3.1.1 分组统计摘要
+下表展示了患病组与未患病组在各项生理指标上的均值 (中位数)。
+通过对比可以发现，患病组在血糖、胰岛素和 BMI 等指标上均显示出较高的水平。
+
+```{r}
+# 先计算均值和中位数 
+mean_tbl <- aggregate(. ~ Outcome, diabetes, mean)
+median_tbl <- aggregate(. ~ Outcome, diabetes, median)
+#  Outcome 转中文
+mean_tbl$Outcome <- ifelse(mean_tbl$Outcome == 0, "未患病", "患病")
+median_tbl$Outcome <- ifelse(median_tbl$Outcome == 0, "未患病", "患病")
+# 设置行名
+rownames(mean_tbl) <- mean_tbl$Outcome
+rownames(median_tbl) <- median_tbl$Outcome
+# 删除 Outcome 列
+mean_tbl$Outcome <- NULL
+median_tbl$Outcome <- NULL
+final_tbl <- data.frame(
+  Map(function(mn, md) paste0(round(mn, 2), " (", round(md, 2), ")"),
+      mean_tbl, median_tbl)
+)
+
+#行名
+rownames(final_tbl) <- rownames(mean_tbl)
+# 列名改成中文
+cn_names <- c(
+  "Pregnancies"    = "怀孕次数",
+  "Glucose"        = "血糖",
+  "BloodPressure"  = "血压",
+  "SkinThickness"  = "皮褶厚度",
+  "Insulin"        = "胰岛素",
+  "BMI"            = "体质指数",
+  "DiabetesPedigreeFunction" = "家族遗传系数",
+  "Age"            = "年龄"
+)
+
+# 匹配并替换列名
+current_names <- colnames(final_tbl)
+new_names <- cn_names[current_names]
+colnames(final_tbl) <- ifelse(is.na(new_names), current_names, new_names)
+
+# 显示最终表格 (使用 kable 美化)
+kable(final_tbl, caption = "表 1: 各组生理指标的均值 (中位数) 对比表")
+```
+3.1.2 单变量分布可视化
+以下图形展示了各生理指标经过中位数填充后的分布情况。密度曲线（粉色）与直方图（蓝色）结合，直观地呈现了数据的集中趋势与偏态。
+```{r}
+# 加载所需的包：ggplot2 用于绘图，patchwork 用于拼图
+if(!require(ggplot2)) install.packages("ggplot2")
+if(!require(patchwork)) install.packages("patchwork")
+library(ggplot2)
+library(patchwork)
+# 定义加固版绘图函数
+
+plot_hist_density <- function(data, var, breaks_seq, title) {
+  data <- as.data.frame(data)
+  df <- data.frame(x = data[[var]])
+  df <- df[!is.na(df$x), , drop = FALSE]
+  if(nrow(df) == 0) return(NULL)
+  
+  p_temp <- ggplot(df, aes(x)) +
+    stat_bin(breaks = breaks_seq, aes(y = after_stat(count / sum(count) * 100))) +
+    stat_density(aes(y = after_stat(density)), geom = "line")
+  
+  built <- ggplot_build(p_temp)
+  hist_max <- tryCatch(max(built$data[[1]]$y, na.rm = TRUE), warning = function(w) 0)
+  dens_max <- tryCatch(max(built$data[[2]]$y, na.rm = TRUE), warning = function(w) 0)
+  if(dens_max == 0) scale_factor <- 1 else scale_factor <- (hist_max * 0.7) / dens_max
+  ggplot(df, aes(x)) +
+    geom_histogram(breaks = breaks_seq,aes(y = after_stat(count / sum(count) * 100)),fill = "steelblue", color = "black", alpha = 0.75) +
+    geom_density(aes(y = after_stat(density * scale_factor)),color = "hotpink", linewidth = 1.2) +
+    labs(title = title, x = title, y = "百分比(%)") +
+    theme_bw(base_size = 14) +
+    theme(plot.title = element_text(hjust = 0.5, face = "bold"), panel.grid.minor = element_blank())
+}
+# 设定 Breaks
+breaks_bmi   <- seq(0, 70, 5)       
+breaks_glu   <- seq(0, 210, 15)     
+breaks_ins   <- seq(0, 900, 50)     
+breaks_bp    <- seq(0, 130, 10)     
+breaks_skin  <- seq(0, 100, 10)     
+breaks_pedi  <- seq(0, 2.5, 0.2)   
+p1 <- plot_hist_density(diabetes, "BMI", breaks_bmi, "BMI")
+p2 <- plot_hist_density(diabetes, "Glucose", breaks_glu, "血糖")
+p3 <- plot_hist_density(diabetes, "Insulin", breaks_ins, "胰岛素")
+p4 <- plot_hist_density(diabetes, "BloodPressure", breaks_bp, "血压")
+p5 <- plot_hist_density(diabetes, "SkinThickness", breaks_skin, "皮褶厚度")
+p6 <- plot_hist_density(diabetes, "DiabetesPedigreeFunction", breaks_pedi, "家族遗传系数")
+(p1 | p2 | p3) / (p4 | p5 | p6)
+
+```
+3.1.3 糖尿病组与健康组的特征对比
+以下箱线图直观对比了健康人群（蓝色）和糖尿病患者（粉色）在各项生理指标上的分布差异。
+```{r}
+# 加载所需的包：tidyr 用于数据重塑
+if(!require(tidyr)) install.packages("tidyr")
+library(tidyr)
+# 定义中文映射 (确保 dplyr, ggplot2 已加载)
+chinese_labels <- c(Pregnancies = "怀孕次数", Glucose = "血糖", BloodPressure = "血压", SkinThickness = "皮褶厚度", Insulin = "胰岛素", BMI = "BMI", DiabetesPedigreeFunction = "家族遗传系数", Age = "年龄", Outcome = "诊断结果")
+feature_labels <- chinese_labels[1:8]
+diabetes_long <- diabetes %>%
+pivot_longer(cols = -Outcome, names_to = "Feature", values_to = "Value") %>%
+  mutate(Outcome = factor(Outcome),Feature = factor(Feature, levels = names(feature_labels)))
+ggplot(diabetes_long, aes(x = Outcome, y = Value, fill = Outcome)) +
+  geom_boxplot(alpha = 0.7, outlier.shape = 21, outlier.size = 1.5) +
+  facet_wrap(~Feature, scales = "free", ncol = 3, labeller = labeller(Feature = feature_labels)) + 
+  scale_fill_manual(values = c("steelblue", "hotpink"), labels = c("健康", "糖尿病")) +
+  labs(title = "各生理指标在健康与患病人群中的分布差异", x = "诊断结果", y = "数值", fill = "组别") +
+  theme_bw() +
+  theme(legend.position = "top", strip.text = element_text(size = 12, face = "bold"))
+```
+初步观察： Glucose（血糖）、BMI 和 Age 在糖尿病组中位数显著高于健康组，表明这些变量与糖尿病的发生有极强的相关性.
+3.1.4 变量相关性热力图
+该图展示了所有变量（包括 Outcome）之间的相关性。颜色越红，正相关性越强。
+```{r}
+# 加载所需的包：reshape2 用于相关矩阵重塑
+
+if(!require(reshape2)) install.packages("reshape2")
+library(reshape2)
+cor_matrix <- cor(diabetes, use = "complete.obs")
+melted_cor <- melt(cor_matrix)
+  ggplot(data = melted_cor, aes(x = Var1, y = Var2, fill = value)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = round(value, 2)), color = "black", size = 3) + 
+  scale_x_discrete(labels = chinese_labels, name = "变量") +
+  scale_y_discrete(labels = chinese_labels, name = "变量") +
+  scale_fill_gradient2(low = "blue", high = "red", mid = "white", midpoint = 0, limit = c(-1,1), space = "Lab", name = "皮尔逊\n相关系数") +labs(title = "变量间相关性热力图") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, size = 10, hjust = 1), axis.text.y = element_text(size = 10), plot.title = element_text(hjust = 0.5))+
+  coord_fixed()
+```
+观察结果：
+预测 Outcome：Glucose 与 Outcome 的相关系数（约 0.49）最高，其次是 BMI (约 0.35)。这再次确认了血糖是主要风险因子。
+特征共线性：Age 和 Pregnancies 具有中等程度的相关性（约 0.55）。
+3.2 逻辑回归模型结果
+3.2.1 模型摘要与系数解释
+在训练集上构建逻辑回归模型，并查看模型系数。
+```{r}
+# 准备数据：结局变量转换为因子
+train_data_clean <- train_data %>% mutate(Outcome = factor(Outcome, levels = c(0, 1)))
+test_data_clean <- test_data %>% mutate(Outcome = factor(Outcome, levels = c(0, 1)))
+# 模型训练
+model_lr <- glm(Outcome ~ ., data = train_data_clean, family = binomial)
+# 打印模型摘要
+print(summary(model_lr))
+```
+核心发现：
+显著变量：Glucose、BMI、Age 和 Pregnancies 的 P 值 (Pr(>|z|)) 均小于 0.05，是统计学上最显著的预测因子。
+医学意义：所有显著变量的系数（Estimate）均为正值。这意味着，在控制其他变量不变的情况下，血糖越高、BMI 越高、年龄越大、怀孕次数越多，患糖尿病的对数几率 (Log Odds) 越高，即患病风险越大。
+
+3.2.2 模型评估指标：混淆矩阵
+使用测试集评估模型的分类性能。
+```{r}
+# 加载所需的包：caret 用于混淆矩阵
+if(!require(caret)) install.packages("caret")
+library(caret)
+# 预测概率
+test_probabilities <- predict(model_lr, newdata = test_data_clean, type = "response")
+# 转换为分类预测 (阈值 0.5)
+test_predictions_class <- ifelse(test_probabilities > 0.5, "1", "0")
+test_predictions_factor <- factor(test_predictions_class, levels = c("0", "1"))
+# 创建混淆矩阵
+conf_matrix<-confusionMatrix(data = test_predictions_factor,reference = test_data_clean$Outcome,positive = "1")
+print(conf_matrix)
+
+```
+关键性能指标 (Metrics):
+Accuracy (准确率): 约 0.78。
+Specificity (特异度): 约 0.90 (识别健康人的能力强)。
+Sensitivity (召回率): 约 0.55 (识别患者的能力相对较弱，有约 45% 的患者被漏诊)。
+
+3.2.3 模型区分能力：ROC 曲线与 AUC 值
+AUC 是衡量模型区分能力（即区分患病和健康人群的能力）的金标准。
+```{r}
+# 加载所需的包：pROC 用于 ROC 曲线和 AUC 计算
+if(!require(pROC)) install.packages("pROC")
+library(pROC)
+# 绘制 ROC 曲线并计算 AUC
+roc_curve <-roc(response = test_data_clean$Outcome, predictor = test_probabilities)
+auc_value <-auc(roc_curve)
+# 绘制 ROC 曲线图
+plot(roc_curve, main = paste("ROC 曲线 (AUC:", round(auc_value, 4), ")"),col = "blue",lwd = 2,print.auc = TRUE)
+legend("bottomright", legend = paste("AUC =", round(auc_value, 4)), col = "blue", lwd = 2)
+```
+结果： AUC 值为0.8329，表明该逻辑回归模型在测试集上具有 “良好” 的区分能力。
+
+讨论与结论
+4.1 核心发现与模型意义
+本研究基于基础生理指标构建了一个用于糖尿病风险预测的逻辑回归模型。模型结果清晰揭示了多项关键风险因素：
+显著风险因素：Glucose、BMI、Age 与 Pregnancies 在统计上均表现为显著的正向预测因素，说明这些数值越高，患糖尿病的概率越大。这一发现与临床对糖尿病高危因素的认识高度一致，增强了模型的可信度。
+模型整体表现：模型的总体准确率约为 78%，AUC 为0.8329，表明模型具备良好的区分能力。特别是模型在识别非糖尿病个体方面具备 较高的特异度（约 90%），适合用于初步排除低风险人群。然而，其召回率为 57%，提示模型在捕捉全部潜在患者方面仍有改进空间。
+总体而言，该模型为基础医疗场景提供了一种成本低、可解释性强的糖尿病风险筛查方法，可作为临床门诊快速评估工具的参考。
+
+4.2 局限性与未来方向
+尽管模型在一定程度上表现出可用性，但仍存在以下局限性：
+特征维度有限：本研究仅纳入生理学指标，缺乏生活方式（如饮食、运动习惯）及遗传因素等更全面的数据，可能限制模型性能的上限。
+数据来源单一：研究使用的 Pima 印第安人数据集样本量有限（n=768），且来自单一人群，因此模型的泛化能力可能不足，需在更多样化人群中进行验证。
+模型复杂度受限：逻辑回归本质上为线性模型，可能无法捕捉特征间复杂的非线性关系。未来可尝试引入随机森林、梯度提升树或神经网络等非线性模型，以提升预测能力及召回率。
+综上所述，本研究构建的逻辑回归模型虽为轻量级，但为糖尿病风险的快速预筛提供了有价值的参考。未来结合多源数据和更复杂的建模方法，有望进一步提升模型的临床应用价值。 
+
