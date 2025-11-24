@@ -7,9 +7,8 @@
 我的目标是练习一个完整工作流，并尝试建立一个简单的糖尿病预测模型。
 
 ## 项目内容
-1. **pima.Rmd**：核心分析过程，包括缺失值处理、可视化、建模、评估等  [查看 pima.Rmd](./pima.Rmd)
-
-2. **diabetes**：存放数据  
+1. **pima.Rmd**：核心分析过程，包括缺失值处理、可视化、建模、评估等  [查看](https://github.com/chenhouhui44/Pima-Diabetes-Prediction/blob/main/pima.Rmd)
+2. **diabetes**：存放数据 [查看] 
 3. **diabetes.R**：R脚本全部内容  
 4. **README.md**：记录我的学习过程  
 
